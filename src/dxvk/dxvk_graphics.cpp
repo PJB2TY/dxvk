@@ -301,9 +301,12 @@ namespace dxvk {
       msInfo.minSampleShading     = 1.0f;
     }
 
+    // Alpha to coverage is not supported with sample mask exports.
+    cbUseDynamicAlphaToCoverage = !fs || !fs->flags().test(DxvkShaderFlag::ExportsSampleMask);
+
     msSampleMask                  = state.ms.sampleMask() & ((1u << msInfo.rasterizationSamples) - 1);
     msInfo.pSampleMask            = &msSampleMask;
-    msInfo.alphaToCoverageEnable  = state.ms.enableAlphaToCoverage();
+    msInfo.alphaToCoverageEnable  = state.ms.enableAlphaToCoverage() && cbUseDynamicAlphaToCoverage;
 
     // We need to be fully consistent with the pipeline state here, and
     // while we could consistently infer it, just don't take any chances
@@ -325,6 +328,7 @@ namespace dxvk {
            && msInfo.alphaToOneEnable         == other.msInfo.alphaToOneEnable
            && msSampleMask                    == other.msSampleMask
            && cbUseDynamicBlendConstants      == other.cbUseDynamicBlendConstants
+           && cbUseDynamicAlphaToCoverage     == other.cbUseDynamicAlphaToCoverage
            && feedbackLoop                    == other.feedbackLoop;
 
     for (uint32_t i = 0; i < rtInfo.colorAttachmentCount && eq; i++)
@@ -364,6 +368,7 @@ namespace dxvk {
     hash.add(uint32_t(msInfo.alphaToOneEnable));
     hash.add(uint32_t(msSampleMask));
     hash.add(uint32_t(cbUseDynamicBlendConstants));
+    hash.add(uint32_t(cbUseDynamicAlphaToCoverage));
     hash.add(uint32_t(feedbackLoop));
 
     for (uint32_t i = 0; i < rtInfo.colorAttachmentCount; i++)
@@ -396,14 +401,20 @@ namespace dxvk {
     uint32_t dynamicStateCount = 0;
     std::array<VkDynamicState, 4> dynamicStates = { };
 
-    if (m_device->features().extExtendedDynamicState3.extendedDynamicState3RasterizationSamples
-     && m_device->features().extExtendedDynamicState3.extendedDynamicState3SampleMask) {
+    bool hasDynamicMultisampleState = state.msInfo.sampleShadingEnable
+      && m_device->features().extExtendedDynamicState3.extendedDynamicState3RasterizationSamples
+      && m_device->features().extExtendedDynamicState3.extendedDynamicState3SampleMask;
+
+    bool hasDynamicAlphaToCoverage = hasDynamicMultisampleState && state.cbUseDynamicAlphaToCoverage
+      && device->features().extExtendedDynamicState3.extendedDynamicState3AlphaToCoverageEnable;
+
+    if (hasDynamicMultisampleState) {
       dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_RASTERIZATION_SAMPLES_EXT;
       dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
-
-      if (device->features().extExtendedDynamicState3.extendedDynamicState3AlphaToCoverageEnable)
-        dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;
     }
+
+    if (hasDynamicAlphaToCoverage)
+      dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;
 
     if (state.cbUseDynamicBlendConstants)
       dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_BLEND_CONSTANTS;
@@ -422,6 +433,20 @@ namespace dxvk {
     if (state.feedbackLoop & VK_IMAGE_ASPECT_DEPTH_BIT)
       flags |= VK_PIPELINE_CREATE_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
 
+    // Fix up multisample state based on dynamic state. Needed to
+    // silence validation errors in case we hit the full EDS3 path.
+    VkPipelineMultisampleStateCreateInfo msInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+    msInfo.sampleShadingEnable = state.msInfo.sampleShadingEnable;
+    msInfo.minSampleShading = state.msInfo.minSampleShading;
+
+    if (!hasDynamicMultisampleState) {
+      msInfo.rasterizationSamples = state.msInfo.rasterizationSamples;
+      msInfo.pSampleMask = state.msInfo.pSampleMask;
+    }
+
+    if (!hasDynamicAlphaToCoverage)
+      msInfo.alphaToCoverageEnable = state.msInfo.alphaToCoverageEnable;
+
     // pNext is non-const for some reason, but this is only an input
     // structure, so we should be able to safely use const_cast.
     VkGraphicsPipelineLibraryCreateInfoEXT libInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT };
@@ -431,7 +456,7 @@ namespace dxvk {
     VkGraphicsPipelineCreateInfo info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &libInfo };
     info.flags                = flags;
     info.pColorBlendState     = &state.cbInfo;
-    info.pMultisampleState    = &state.msInfo;
+    info.pMultisampleState    = &msInfo;
     info.pDynamicState        = &dyInfo;
     info.basePipelineIndex    = -1;
 
@@ -458,7 +483,9 @@ namespace dxvk {
   DxvkGraphicsPipelinePreRasterizationState::DxvkGraphicsPipelinePreRasterizationState(
     const DxvkDevice*                     device,
     const DxvkGraphicsPipelineStateInfo&  state,
-    const DxvkShader*                     gs) {
+    const DxvkShader*                     tes,
+    const DxvkShader*                     gs,
+    const DxvkShader*                     fs) {
     // Set up tessellation state
     tsInfo.patchControlPoints = state.ia.patchVertexCount();
     
@@ -494,6 +521,27 @@ namespace dxvk {
       rsConservativeInfo.conservativeRasterizationMode = state.rs.conservativeMode();
       rsConservativeInfo.extraPrimitiveOverestimationSize = 0.0f;
     }
+
+    // Set up line rasterization mode as requested by the application.
+    if (state.rs.lineMode() != VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT && isLineRendering(state, tes, gs)) {
+      rsLineInfo.pNext = std::exchange(rsInfo.pNext, &rsLineInfo);
+      rsLineInfo.lineRasterizationMode = state.rs.lineMode();
+
+      if (rsLineInfo.lineRasterizationMode == VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT) {
+        // This line width matches expected D3D behaviour, hard-code this
+        // so that we don't need to introduce an extra bit of render state.
+        rsInfo.lineWidth = 1.4f;
+      } else {
+        // Vulkan does not allow alphaToCoverage or sample rate shading
+        // in combination with smooth lines. Override the line mode to
+        // rectangular to fix this, but keep the width fixed at 1.0.
+        bool needsOverride = state.ms.enableAlphaToCoverage()
+          || (fs && fs->flags().test(DxvkShaderFlag::HasSampleRateShading));
+
+        if (needsOverride)
+          rsLineInfo.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT;
+      }
+    }
   }
 
 
@@ -520,6 +568,9 @@ namespace dxvk {
         && rsConservativeInfo.extraPrimitiveOverestimationSize == other.rsConservativeInfo.extraPrimitiveOverestimationSize;
     }
 
+    if (eq)
+      eq = rsLineInfo.lineRasterizationMode == other.rsLineInfo.lineRasterizationMode;
+
     return eq;
   }
 
@@ -540,7 +591,32 @@ namespace dxvk {
 
     hash.add(rsConservativeInfo.conservativeRasterizationMode);
     hash.add(bit::cast<uint32_t>(rsConservativeInfo.extraPrimitiveOverestimationSize));
+
+    hash.add(rsLineInfo.lineRasterizationMode);
     return hash;
+  }
+
+
+  bool DxvkGraphicsPipelinePreRasterizationState::isLineRendering(
+    const DxvkGraphicsPipelineStateInfo&  state,
+    const DxvkShader*                     tes,
+    const DxvkShader*                     gs) {
+    bool isLineRendering = state.rs.polygonMode() == VK_POLYGON_MODE_LINE;
+
+    if (gs) {
+      isLineRendering |= gs->info().outputTopology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    } else if (tes) {
+      isLineRendering |= tes->info().outputTopology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    } else {
+      VkPrimitiveTopology topology = state.ia.primitiveTopology();
+
+      isLineRendering |= topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST
+                      || topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP
+                      || topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY
+                      || topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY;
+    }
+
+    return isLineRendering;
   }
 
 
@@ -869,7 +945,8 @@ namespace dxvk {
     m_bindings      (layout),
     m_barrier       (layout->getGlobalBarrier()),
     m_vsLibrary     (vsLibrary),
-    m_fsLibrary     (fsLibrary) {
+    m_fsLibrary     (fsLibrary),
+    m_debugName     (createDebugName()) {
     m_vsIn  = m_shaders.vs != nullptr ? m_shaders.vs->info().inputMask  : 0;
     m_fsOut = m_shaders.fs != nullptr ? m_shaders.fs->info().outputMask : 0;
     m_specConstantMask = this->computeSpecConstantMask();
@@ -891,6 +968,13 @@ namespace dxvk {
     
     if (m_barrier.access & VK_ACCESS_SHADER_WRITE_BIT)
       m_flags.set(DxvkGraphicsPipelineFlag::HasStorageDescriptors);
+
+    if (m_shaders.fs != nullptr) {
+      if (m_shaders.fs->flags().test(DxvkShaderFlag::HasSampleRateShading))
+        m_flags.set(DxvkGraphicsPipelineFlag::HasSampleRateShading);
+      if (m_shaders.fs->flags().test(DxvkShaderFlag::ExportsSampleMask))
+        m_flags.set(DxvkGraphicsPipelineFlag::HasSampleMaskExport);
+    }
   }
   
   
@@ -1046,7 +1130,9 @@ namespace dxvk {
 
     if (doCreateBasePipeline)
       baseHandle = this->getBasePipeline(state);
-    else
+
+    // Fast-linking may fail in some situations
+    if (!baseHandle)
       fastHandle = this->getOptimizedPipeline(state);
 
     // Log pipeline state if requested, or on failure
@@ -1074,11 +1160,20 @@ namespace dxvk {
     if (!m_vsLibrary || !m_fsLibrary)
       return false;
 
-    // Certain rasterization states cannot be set dynamically,
-    // so we're assuming defaults for them, most notably the
-    // polygon mode and conservative rasterization settings
+    // We do not implement setting certain rarely used render
+    // states dynamically since they are generally not used
+    bool isLineRendering = DxvkGraphicsPipelinePreRasterizationState::isLineRendering(state, m_shaders.tes.ptr(), m_shaders.gs.ptr());
+
     if (state.rs.polygonMode() != VK_POLYGON_MODE_FILL
-     || state.rs.conservativeMode() != VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT)
+     || state.rs.conservativeMode() != VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT
+     || (state.rs.lineMode() != VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT && isLineRendering))
+      return false;
+
+    // Depth clip is assumed to be enabled. If the driver does not
+    // support dynamic depth clip, we'd have to late-compile anyway
+    // unless the pipeline is used multiple times.
+    if (!m_device->features().extExtendedDynamicState3.extendedDynamicState3DepthClipEnable
+     && !state.rs.depthClipEnable())
       return false;
 
     if (m_shaders.tcs != nullptr) {
@@ -1126,7 +1221,8 @@ namespace dxvk {
           return false;
 
         if (!canUseDynamicAlphaToCoverage
-         && (state.ms.enableAlphaToCoverage()))
+         && (state.ms.enableAlphaToCoverage())
+         && !m_shaders.fs->flags().test(DxvkShaderFlag::ExportsSampleMask))
           return false;
       }
     }
@@ -1151,9 +1247,6 @@ namespace dxvk {
     key.viLibrary = m_manager->createVertexInputLibrary(viState);
     key.foLibrary = m_manager->createFragmentOutputLibrary(foState);
 
-    if (!m_device->features().extExtendedDynamicState3.extendedDynamicState3DepthClipEnable)
-      key.args.depthClipEnable = state.rs.depthClipEnable();
-
     auto entry = m_basePipelines.find(key);
     if (entry != m_basePipelines.end())
       return entry->second;
@@ -1168,10 +1261,11 @@ namespace dxvk {
     const DxvkGraphicsPipelineBaseInstanceKey& key) const {
     auto vk = m_device->vkd();
 
+    DxvkShaderPipelineLibraryHandle vs = m_vsLibrary->acquirePipelineHandle();
+    DxvkShaderPipelineLibraryHandle fs = m_fsLibrary->acquirePipelineHandle();
+
     std::array<VkPipeline, 4> libraries = {{
-      key.viLibrary->getHandle(),
-      m_vsLibrary->acquirePipelineHandle(key.args),
-      m_fsLibrary->acquirePipelineHandle(key.args),
+      key.viLibrary->getHandle(), vs.handle, fs.handle,
       key.foLibrary->getHandle(),
     }};
 
@@ -1180,13 +1274,14 @@ namespace dxvk {
     libInfo.pLibraries      = libraries.data();
 
     VkGraphicsPipelineCreateInfo info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &libInfo };
+    info.flags              = vs.linkFlags | fs.linkFlags;
     info.layout             = m_bindings->getPipelineLayout(true);
     info.basePipelineIndex  = -1;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkResult vr = vk->vkCreateGraphicsPipelines(vk->device(), VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
 
-    if (vr != VK_SUCCESS)
+    if (vr && vr != VK_PIPELINE_COMPILE_REQUIRED_EXT)
       Logger::err(str::format("DxvkGraphicsPipeline: Failed to create base pipeline: ", vr));
 
     return pipeline;
@@ -1578,6 +1673,29 @@ namespace dxvk {
     }
 
     Logger::log(level, sstr.str());
+  }
+
+
+  std::string DxvkGraphicsPipeline::createDebugName() const {
+    std::stringstream name;
+
+    std::array<Rc<DxvkShader>, 5> shaders = {{
+      m_shaders.vs,
+      m_shaders.tcs,
+      m_shaders.tes,
+      m_shaders.gs,
+      m_shaders.fs,
+    }};
+
+    for (const auto& shader : shaders) {
+      if (shader) {
+        std::string shaderName = shader->debugName();
+        size_t len = std::min(shaderName.size(), size_t(10));
+        name << "[" << shaderName.substr(0, len) << "] ";
+      }
+    }
+
+    return name.str();
   }
   
 }

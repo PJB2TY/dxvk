@@ -23,12 +23,7 @@ namespace dxvk {
   };
 
   static constexpr D3D9ShaderMasks FixedFunctionMask =
-    { 0b1111111, 0b1 };
-
-  struct D3D9MipFilter {
-    bool                MipsEnabled;
-    VkSamplerMipmapMode MipFilter;
-  };
+    { 0b11111111, 0b1 };
 
   struct D3D9BlendState {
     D3DBLEND   Src;
@@ -146,13 +141,26 @@ namespace dxvk {
 
   VkBlendOp DecodeBlendOp(D3DBLENDOP BlendOp);
 
-  VkFilter DecodeFilter(D3DTEXTUREFILTERTYPE Filter);
+  inline VkFilter DecodeFilter(D3DTEXTUREFILTERTYPE Filter) {
+    return Filter > D3DTEXF_POINT ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  }
 
-  D3D9MipFilter DecodeMipFilter(D3DTEXTUREFILTERTYPE Filter);
+  inline VkSamplerMipmapMode DecodeMipFilter(D3DTEXTUREFILTERTYPE Filter) {
+    return Filter > D3DTEXF_POINT ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  }
 
-  bool IsAnisotropic(D3DTEXTUREFILTERTYPE Filter);
+  inline VkSamplerAddressMode DecodeAddressMode(D3DTEXTUREADDRESS Mode) {
+    constexpr uint32_t Lut =
+      (uint32_t(VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT)      << (3 * D3DTADDRESS_MIRROR)) |
+      (uint32_t(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)        << (3 * D3DTADDRESS_CLAMP)) |
+      (uint32_t(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER)      << (3 * D3DTADDRESS_BORDER)) |
+      (uint32_t(VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE) << (3 * D3DTADDRESS_MIRRORONCE));
 
-  VkSamplerAddressMode DecodeAddressMode(D3DTEXTUREADDRESS Mode);
+    // VK_SAMPLER_ADDRESS_MODE_REPEAT has a value of 0, so we
+    // get it for free if the app passes an unsupported value
+    uint32_t shift = std::min(uint32_t(Mode) * 3u, 31u);
+    return VkSamplerAddressMode((uint32_t(Lut) >> shift) & 0x7u);
+  }
 
   VkCompareOp DecodeCompareOp(D3DCMPFUNC Func);
 
@@ -176,19 +184,19 @@ namespace dxvk {
 
   void ConvertRect(RECT rect, VkOffset2D& offset, VkExtent2D& extent);
 
-  inline float GetDepthBufferRValue(VkFormat Format, int32_t vendorId) {
+  inline float GetDepthBufferRValue(VkFormat Format, int32_t vendorId, bool exact, bool forceUnorm) {
     switch (Format) {
       case VK_FORMAT_D16_UNORM_S8_UINT:
       case VK_FORMAT_D16_UNORM:
-        return vendorId == 0x10de ? float(1 << 15) : float(1 << 16);
+        return (vendorId == 0x10de && !exact) ? float(1 << 15) : float(1 << 16);
 
       case VK_FORMAT_D24_UNORM_S8_UINT:
-        return vendorId == 0x10de ? float(1 << 23) : float(1 << 24);
+        return (vendorId == 0x10de && !exact) ? float(1 << 23) : float(1 << 24);
 
       default:
       case VK_FORMAT_D32_SFLOAT_S8_UINT:
       case VK_FORMAT_D32_SFLOAT:
-        return float(1 << 23);
+        return forceUnorm ? float(1 << 24) : float(1 << 23);
     }
   }
 
@@ -204,37 +212,10 @@ namespace dxvk {
 
   bool IsDepthFormat(D3D9Format Format);
 
-  inline bool operator == (const D3DVIEWPORT9& a, const D3DVIEWPORT9& b) {
-    return a.X      == b.X      &&
-           a.Y      == b.Y      &&
-           a.Width  == b.Width  &&
-           a.Height == b.Height &&
-           a.MinZ   == b.MinZ   &&
-           a.MaxZ   == b.MaxZ;
-  }
+  bool IsDepthStencilFormat(D3D9Format Format);
 
-  inline bool operator != (const D3DVIEWPORT9& a, const D3DVIEWPORT9& b) {
-    return !(a == b);
-  }
+  bool IsLockableDepthStencilFormat(D3D9Format Format);
 
-  inline bool operator == (const RECT& a, const RECT& b) {
-    return a.left   == b.left  &&
-           a.right  == b.right &&
-           a.top    == b.top   &&
-           a.bottom == b.bottom;
-  }
-
-  inline bool operator != (const RECT& a, const RECT& b) {
-    return !(a == b);
-  }
-
-  inline bool operator == (const POINT& a, const POINT& b) {
-    return a.x == b.x && a.y == b.y;
-  }
-
-  inline bool operator != (const POINT& a, const POINT& b) {
-    return !(a == b);
-  }
 
   inline bool IsPoolManaged(D3DPOOL Pool) {
     return Pool == D3DPOOL_MANAGED || Pool == D3DPOOL_MANAGED_EX;
@@ -296,3 +277,46 @@ namespace dxvk {
   }
 
 }
+
+
+inline bool operator == (const D3DVIEWPORT9& a, const D3DVIEWPORT9& b) {
+  return a.X      == b.X      &&
+         a.Y      == b.Y      &&
+         a.Width  == b.Width  &&
+         a.Height == b.Height &&
+         a.MinZ   == b.MinZ   &&
+         a.MaxZ   == b.MaxZ;
+}
+
+inline bool operator != (const D3DVIEWPORT9& a, const D3DVIEWPORT9& b) {
+  return !(a == b);
+}
+
+inline bool operator == (const RECT& a, const RECT& b) {
+  return a.left   == b.left  &&
+         a.right  == b.right &&
+         a.top    == b.top   &&
+         a.bottom == b.bottom;
+}
+
+inline bool operator != (const RECT& a, const RECT& b) {
+  return !(a == b);
+}
+
+inline bool operator == (const POINT& a, const POINT& b) {
+  return a.x == b.x && a.y == b.y;
+}
+
+inline bool operator != (const POINT& a, const POINT& b) {
+  return !(a == b);
+}
+
+inline bool operator == (const D3DDISPLAYMODEEX& a, const D3DDISPLAYMODEEX& b) {
+  return a.Size             == b.Size             &&
+         a.Width            == b.Width            &&
+         a.Height           == b.Height           &&
+         a.RefreshRate      == b.RefreshRate      &&
+         a.Format           == b.Format           &&
+         a.ScanLineOrdering == b.ScanLineOrdering;
+}
+

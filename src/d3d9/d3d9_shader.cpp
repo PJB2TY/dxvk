@@ -57,6 +57,7 @@ namespace dxvk {
     m_shader       = pModule->compile(*pDxsoModuleInfo, name, AnalysisInfo, constantLayout);
     m_isgn         = pModule->isgn();
     m_usedSamplers = pModule->usedSamplers();
+    m_textureTypes = pModule->textureTypes();
 
     // Shift up these sampler bits so we can just
     // do an or per-draw in the device.
@@ -96,9 +97,6 @@ namespace dxvk {
       reinterpret_cast<const char*>(pShaderBytecode));
 
     DxsoModule module(reader);
-
-    if (module.info().majorVersion() > pDxbcModuleInfo->options.shaderModel)
-      throw DxvkError("GetShaderModule: Out of range of supported shader model");
 
     if (module.info().shaderStage() != ShaderStage)
       throw DxvkError("GetShaderModule: Bytecode does not match shader stage");

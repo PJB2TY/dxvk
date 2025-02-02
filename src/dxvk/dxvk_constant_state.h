@@ -3,7 +3,6 @@
 #include "dxvk_buffer.h"
 #include "dxvk_framebuffer.h"
 #include "dxvk_limits.h"
-#include "dxvk_resource.h"
 #include "dxvk_shader.h"
 
 namespace dxvk {
@@ -30,25 +29,46 @@ namespace dxvk {
 
 
   /**
+   * \brief Depth bias representation
+   * 
+   * Stores depth bias representation info.
+   */
+  struct DxvkDepthBiasRepresentation {
+    VkDepthBiasRepresentationEXT depthBiasRepresentation;
+    VkBool32                     depthBiasExact;
+
+    bool operator == (const DxvkDepthBiasRepresentation& other) const {
+      return depthBiasRepresentation == other.depthBiasRepresentation
+          && depthBiasExact          == other.depthBiasExact;
+    }
+
+    bool operator != (const DxvkDepthBiasRepresentation& other) const {
+      return depthBiasRepresentation != other.depthBiasRepresentation
+          || depthBiasExact          != other.depthBiasExact;
+    }
+  };
+
+
+  /**
    * \brief Depth bias
    * 
    * Stores depth bias values.
    */
   struct DxvkDepthBias {
-    float               depthBiasConstant;
-    float               depthBiasSlope;
-    float               depthBiasClamp;
+    float                        depthBiasConstant;
+    float                        depthBiasSlope;
+    float                        depthBiasClamp;
 
     bool operator == (const DxvkDepthBias& other) const {
-      return depthBiasConstant == other.depthBiasConstant
-          && depthBiasSlope    == other.depthBiasSlope
-          && depthBiasClamp    == other.depthBiasClamp;
+      return depthBiasConstant       == other.depthBiasConstant
+          && depthBiasSlope          == other.depthBiasSlope
+          && depthBiasClamp          == other.depthBiasClamp;
     }
 
     bool operator != (const DxvkDepthBias& other) const {
-      return depthBiasConstant != other.depthBiasConstant
-          || depthBiasSlope    != other.depthBiasSlope
-          || depthBiasClamp    != other.depthBiasClamp;
+      return depthBiasConstant       != other.depthBiasConstant
+          || depthBiasSlope          != other.depthBiasSlope
+          || depthBiasClamp          != other.depthBiasClamp;
     }
   };
 
@@ -106,6 +126,7 @@ namespace dxvk {
     VkConservativeRasterizationModeEXT conservativeMode;
     VkSampleCountFlags  sampleCount;
     VkBool32            flatShading;
+    VkLineRasterizationModeEXT lineMode;
   };
   
   
