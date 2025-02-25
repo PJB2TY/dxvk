@@ -1,6 +1,8 @@
+#if defined(DXVK_WSI_GLFW)
+
 #include "../wsi_monitor.h"
 
-#include "wsi/native_wsi.h"
+#include "wsi/native_glfw.h"
 #include "wsi_platform_glfw.h"
 
 #include "../../util/util_string.h"
@@ -11,18 +13,22 @@
 
 namespace dxvk::wsi {
 
-  HMONITOR getDefaultMonitor() {
+  HMONITOR GlfwWsiDriver::getDefaultMonitor() {
     return enumMonitors(0);
   }
 
 
-  HMONITOR enumMonitors(uint32_t index) {
+  HMONITOR GlfwWsiDriver::enumMonitors(uint32_t index) {
     return isDisplayValid(int32_t(index))
          ? toHmonitor(index)
          : nullptr;
   }
 
-  bool getDisplayName(
+  HMONITOR GlfwWsiDriver::enumMonitors(const LUID *adapterLUID[], uint32_t numLUIDs, uint32_t index) {
+    return enumMonitors(index);
+  }
+
+  bool GlfwWsiDriver::getDisplayName(
       HMONITOR hMonitor,
       WCHAR            (&Name)[32]) {
     const int32_t displayId = fromHmonitor(hMonitor);
@@ -42,7 +48,7 @@ namespace dxvk::wsi {
   }
 
 
-  bool getDesktopCoordinates(
+  bool GlfwWsiDriver::getDesktopCoordinates(
       HMONITOR hMonitor,
       RECT* pRect) {
     const int32_t displayId = fromHmonitor(hMonitor);
@@ -93,7 +99,7 @@ namespace dxvk::wsi {
   }
 
 
-  bool getDisplayMode(
+  bool GlfwWsiDriver::getDisplayMode(
       HMONITOR hMonitor,
       uint32_t ModeNumber,
       WsiMode* pMode) {
@@ -117,7 +123,7 @@ namespace dxvk::wsi {
   }
 
 
-  bool getCurrentDisplayMode(
+  bool GlfwWsiDriver::getCurrentDisplayMode(
       HMONITOR hMonitor,
       WsiMode* pMode) {
     const int32_t displayId = fromHmonitor(hMonitor);
@@ -137,7 +143,7 @@ namespace dxvk::wsi {
   }
 
 
-  bool getDesktopDisplayMode(
+  bool GlfwWsiDriver::getDesktopDisplayMode(
       HMONITOR hMonitor,
       WsiMode* pMode) {
     const int32_t displayId = fromHmonitor(hMonitor);
@@ -155,9 +161,11 @@ namespace dxvk::wsi {
     return true;
   }
 
-  std::vector<uint8_t> getMonitorEdid(HMONITOR hMonitor) {
+  std::vector<uint8_t> GlfwWsiDriver::getMonitorEdid(HMONITOR hMonitor) {
     Logger::err("getMonitorEdid not implemented on this platform.");
     return {};
   }
 
 }
+
+#endif

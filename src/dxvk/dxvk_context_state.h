@@ -20,9 +20,11 @@ namespace dxvk {
    * of the graphics and compute pipelines
    * has changed and/or needs to be updated.
    */
-  enum class DxvkContextFlag : uint32_t  {
+  enum class DxvkContextFlag : uint64_t  {
     GpRenderPassBound,          ///< Render pass is currently bound
     GpRenderPassSuspended,      ///< Render pass is currently suspended
+    GpRenderPassSecondaryCmd,   ///< Render pass uses secondary command buffer
+    GpRenderPassSideEffects,    ///< Render pass has side effects
     GpXfbActive,                ///< Transform feedback is enabled
     GpDirtyFramebuffer,         ///< Framebuffer binding is out of date
     GpDirtyPipeline,            ///< Graphics pipeline binding is out of date
@@ -48,14 +50,20 @@ namespace dxvk {
     GpDynamicRasterizerState,   ///< Cull mode and front face are dynamic
     GpDynamicVertexStrides,     ///< Vertex buffer strides are dynamic
     GpIndependentSets,          ///< Graphics pipeline layout was created with independent sets
-    
+
     CpDirtyPipelineState,       ///< Compute pipeline is out of date
     CpDirtySpecConstants,       ///< Compute spec constants are out of date
-    
+
     DirtyDrawBuffer,            ///< Indirect argument buffer is dirty
     DirtyPushConstants,         ///< Push constant data has changed
+
+    ForceWriteAfterWriteSync,   ///< Ignores barrier control flags for write-after-write hazards
+
+    Count
   };
-  
+
+  static_assert(uint32_t(DxvkContextFlag::Count) <= 64u);
+
   using DxvkContextFlags = Flags<DxvkContextFlag>;
 
 
@@ -65,6 +73,9 @@ namespace dxvk {
   enum class DxvkContextFeature : uint32_t {
     TrackGraphicsPipeline,
     VariableMultisampleRate,
+    IndexBufferRobustness,
+    DebugUtils,
+    DirectMultiDraw,
     FeatureCount
   };
 
@@ -78,8 +89,11 @@ namespace dxvk {
    * synchronize implicitly.
    */
   enum class DxvkBarrierControl : uint32_t {
-    IgnoreWriteAfterWrite       = 1,
-    IgnoreGraphicsBarriers      = 2,
+    // Ignores write-after-write hazard
+    ComputeAllowWriteOnlyOverlap  = 0,
+    ComputeAllowReadWriteOverlap  = 1,
+
+    GraphicsAllowReadWriteOverlap = 2,
   };
 
   using DxvkBarrierControlFlags  = Flags<DxvkBarrierControl>;
@@ -109,6 +123,7 @@ namespace dxvk {
 
 
   struct DxvkOutputMergerState {
+    DxvkRenderingInfo   renderingInfo;
     DxvkRenderTargets   renderTargets;
     DxvkRenderPassOps   renderPassOps;
     DxvkFramebufferInfo framebufferInfo;
@@ -123,6 +138,7 @@ namespace dxvk {
   struct DxvkXfbState {
     std::array<DxvkBufferSlice, MaxNumXfbBuffers> buffers;
     std::array<DxvkBufferSlice, MaxNumXfbBuffers> counters;
+    std::array<DxvkBufferSlice, MaxNumXfbBuffers> activeCounters;
   };
   
   
@@ -150,12 +166,13 @@ namespace dxvk {
 
 
   struct DxvkDynamicState {
-    DxvkBlendConstants  blendConstants    = { 0.0f, 0.0f, 0.0f, 0.0f };
-    DxvkDepthBias       depthBias         = { 0.0f, 0.0f, 0.0f };
-    DxvkDepthBounds     depthBounds       = { false, 0.0f, 1.0f };
-    uint32_t            stencilReference  = 0;
-    VkCullModeFlags     cullMode          = VK_CULL_MODE_BACK_BIT;
-    VkFrontFace         frontFace         = VK_FRONT_FACE_CLOCKWISE;
+    DxvkBlendConstants          blendConstants          = { 0.0f, 0.0f, 0.0f, 0.0f };
+    DxvkDepthBias               depthBias               = { 0.0f, 0.0f, 0.0f };
+    DxvkDepthBiasRepresentation depthBiasRepresentation = { VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT, false };
+    DxvkDepthBounds             depthBounds             = { false, 0.0f, 1.0f };
+    uint32_t                    stencilReference        = 0;
+    VkCullModeFlags             cullMode                = VK_CULL_MODE_BACK_BIT;
+    VkFrontFace                 frontFace               = VK_FRONT_FACE_CLOCKWISE;
   };
 
 
@@ -167,6 +184,14 @@ namespace dxvk {
   };
   
   
+  struct DxvkDeferredResolve {
+    Rc<DxvkImageView> imageView;
+    uint32_t layerMask;
+    VkResolveModeFlagBits depthMode;
+    VkResolveModeFlagBits stencilMode;
+  };
+
+
   /**
    * \brief Pipeline state
    * 

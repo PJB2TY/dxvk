@@ -50,24 +50,20 @@ namespace dxvk {
     }
     
     VkImageLayout GetRenderLayout() const {
-      if (m_view->imageInfo().tiling == VK_IMAGE_TILING_OPTIMAL) {
-        switch (m_desc.Flags & (D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL)) {
-          default:  // case 0
-            return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-          case D3D11_DSV_READ_ONLY_DEPTH:
-            return VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL_KHR;
-          case D3D11_DSV_READ_ONLY_STENCIL:
-            return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL_KHR;
-          case D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL:
-            return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        }
-      } else {
-        return VK_IMAGE_LAYOUT_GENERAL;
+      switch (m_desc.Flags & (D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL)) {
+        default:  // case 0
+          return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        case D3D11_DSV_READ_ONLY_DEPTH:
+          return VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL_KHR;
+        case D3D11_DSV_READ_ONLY_STENCIL:
+          return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL_KHR;
+        case D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL:
+          return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
       }
     }
 
     UINT GetSampleCount() const {
-      return UINT(m_view->imageInfo().sampleCount);
+      return UINT(m_view->image()->info().sampleCount);
     }
 
     VkImageAspectFlags GetWritableAspectMask() const {
@@ -75,6 +71,10 @@ namespace dxvk {
       if (m_desc.Flags & D3D11_DSV_READ_ONLY_DEPTH)   mask &= ~VK_IMAGE_ASPECT_DEPTH_BIT;
       if (m_desc.Flags & D3D11_DSV_READ_ONLY_STENCIL) mask &= ~VK_IMAGE_ASPECT_STENCIL_BIT;
       return mask;
+    }
+
+    DXGI_FORMAT GetViewFormat() const {
+      return m_desc.Format;
     }
 
     D3D10DepthStencilView* GetD3D10Iface() {

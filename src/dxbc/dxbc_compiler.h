@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <utility>
 #include <vector>
 
 #include "../spirv/spirv_module.h"
@@ -135,6 +136,13 @@ namespace dxvk {
     uint32_t    component = 0;
   };
   
+
+  struct DxbcIndexRange {
+    DxbcOperandType type;
+    uint32_t start;
+    uint32_t length;
+  };
+
   
   /**
    * \brief Vertex shader-specific structure
@@ -445,6 +453,10 @@ namespace dxvk {
     // xfb output registers for geometry shaders
     std::vector<DxbcXfbVar> m_xfbVars;
     
+    /////////////////////////////////////////////
+    // Dynamically indexed input and output regs
+    std::vector<DxbcIndexRange> m_indexRanges = { };
+
     //////////////////////////////////////////////////////
     // Shader resource variables. These provide access to
     // constant buffers, samplers, textures, and UAVs.
@@ -473,7 +485,7 @@ namespace dxvk {
     uint32_t m_vArrayLengthId = 0;
 
     uint32_t m_vArray = 0;
-    
+
     ////////////////////////////////////////////////////
     // Per-vertex input and output blocks. Depending on
     // the shader stage, these may be declared as arrays.
@@ -512,6 +524,7 @@ namespace dxvk {
     // Entry point description - we'll need to declare
     // the function ID and all input/output variables.
     uint32_t              m_entryPointId = 0;
+    bool                  m_hasRawAccessChains = false;
     
     ////////////////////////////////////////////
     // Inter-stage shader interface slots. Also
@@ -535,6 +548,8 @@ namespace dxvk {
     DxbcOpcode m_lastOp = DxbcOpcode::Nop;
     DxbcOpcode m_currOp = DxbcOpcode::Nop;
 
+    VkPrimitiveTopology m_outputTopology = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+
     /////////////////////////////////////////////////////
     // Shader interface and metadata declaration methods
     void emitDcl(
@@ -543,6 +558,9 @@ namespace dxvk {
     void emitDclGlobalFlags(
       const DxbcShaderInstruction&  ins);
     
+    void emitDclIndexRange(
+      const DxbcShaderInstruction&  ins);
+
     void emitDclTemps(
       const DxbcShaderInstruction&  ins);
     
@@ -942,19 +960,6 @@ namespace dxvk {
       const DxbcRegister&           operand,
       const DxbcRegister&           address);
     
-    ///////////////////////////////
-    // Resource load/store methods
-    DxbcRegisterValue emitRawBufferLoad(
-      const DxbcRegister&           operand,
-            DxbcRegisterValue       elementIndex,
-            DxbcRegMask             writeMask,
-            uint32_t&               sparseFeedbackId);
-    
-    void emitRawBufferStore(
-      const DxbcRegister&           operand,
-            DxbcRegisterValue       elementIndex,
-            DxbcRegisterValue       value);
-    
     //////////////////////////
     // Resource query methods
     DxbcRegisterValue emitQueryBufferSize(
@@ -1231,6 +1236,9 @@ namespace dxvk {
     uint32_t getUavCoherence(
             uint32_t                registerId,
             DxbcUavFlags            flags);
+    
+    bool ignoreInputSystemValue(
+            DxbcSystemValue         sv) const;
 
     ///////////////////////////
     // Type definition methods

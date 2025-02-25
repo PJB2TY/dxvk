@@ -67,6 +67,7 @@ namespace dxvk {
       info.usage  = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
       info.stages = util::pipelineStages(shaderInfo.stage);
       info.access = VK_ACCESS_UNIFORM_READ_BIT;
+      info.debugName = "Icb";
       
       VkMemoryPropertyFlags memFlags
         = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
@@ -78,6 +79,12 @@ namespace dxvk {
     }
 
     pDevice->GetDXVKDevice()->registerShader(m_shader);
+
+    // Write back binding mask
+    auto bindings = module.bindings();
+
+    if (bindings)
+      m_bindings = *bindings;
   }
 
   
