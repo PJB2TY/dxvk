@@ -1,3 +1,5 @@
+#include "../util/util_math.h"
+
 #include "d3d9_options.h"
 
 #include "d3d9_caps.h"
@@ -35,8 +37,8 @@ namespace dxvk {
     this->customDeviceId        = parsePciId(config.getOption<std::string>("d3d9.customDeviceId"));
     this->customDeviceDesc      =            config.getOption<std::string>("d3d9.customDeviceDesc");
 
-    const int32_t vendorId = this->customDeviceId != -1
-      ? this->customDeviceId
+    const uint32_t vendorId = this->customVendorId != -1
+      ? this->customVendorId
       : (adapter != nullptr ? adapter->deviceProperties().vendorID : 0);
 
     this->maxFrameLatency               = config.getOption<int32_t>     ("d3d9.maxFrameLatency",               0);
@@ -47,33 +49,40 @@ namespace dxvk {
     this->strictConstantCopies          = config.getOption<bool>        ("d3d9.strictConstantCopies",          false);
     this->strictPow                     = config.getOption<bool>        ("d3d9.strictPow",                     true);
     this->lenientClear                  = config.getOption<bool>        ("d3d9.lenientClear",                  false);
-    this->numBackBuffers                = config.getOption<int32_t>     ("d3d9.numBackBuffers",                0);
-    this->noExplicitFrontBuffer         = config.getOption<bool>        ("d3d9.noExplicitFrontBuffer",         false);
     this->deferSurfaceCreation          = config.getOption<bool>        ("d3d9.deferSurfaceCreation",          false);
     this->samplerAnisotropy             = config.getOption<int32_t>     ("d3d9.samplerAnisotropy",             -1);
     this->maxAvailableMemory            = config.getOption<int32_t>     ("d3d9.maxAvailableMemory",            4096);
     this->supportDFFormats              = config.getOption<bool>        ("d3d9.supportDFFormats",              true);
     this->supportX4R4G4B4               = config.getOption<bool>        ("d3d9.supportX4R4G4B4",               true);
-    this->supportD32                    = config.getOption<bool>        ("d3d9.supportD32",                    true);
+    this->supportD16Lockable            = config.getOption<bool>        ("d3d9.supportD16Lockable",            false);
     this->useD32forD24                  = config.getOption<bool>        ("d3d9.useD32forD24",                  false);
     this->disableA8RT                   = config.getOption<bool>        ("d3d9.disableA8RT",                   false);
     this->invariantPosition             = config.getOption<bool>        ("d3d9.invariantPosition",             true);
     this->memoryTrackTest               = config.getOption<bool>        ("d3d9.memoryTrackTest",               false);
-    this->supportVCache                 = config.getOption<bool>        ("d3d9.supportVCache",                 vendorId == 0x10de);
-    this->enableDialogMode              = config.getOption<bool>        ("d3d9.enableDialogMode",              false);
+    this->supportVCache                 = config.getOption<bool>        ("d3d9.supportVCache",                 vendorId == uint32_t(DxvkGpuVendor::Nvidia));
     this->forceSamplerTypeSpecConstants = config.getOption<bool>        ("d3d9.forceSamplerTypeSpecConstants", false);
     this->forceSwapchainMSAA            = config.getOption<int32_t>     ("d3d9.forceSwapchainMSAA",            -1);
     this->forceSampleRateShading        = config.getOption<bool>        ("d3d9.forceSampleRateShading",        false);
     this->forceAspectRatio              = config.getOption<std::string> ("d3d9.forceAspectRatio",              "");
-    this->allowDiscard                  = config.getOption<bool>        ("d3d9.allowDiscard",                  true);
     this->enumerateByDisplays           = config.getOption<bool>        ("d3d9.enumerateByDisplays",           true);
-    this->longMad                       = config.getOption<bool>        ("d3d9.longMad",                       false);
-    this->tearFree                      = config.getOption<Tristate>    ("d3d9.tearFree",                      Tristate::Auto);
-    this->apitraceMode                  = config.getOption<bool>        ("d3d9.apitraceMode",                  false);
+    this->cachedDynamicBuffers          = config.getOption<bool>        ("d3d9.cachedDynamicBuffers",          false);
     this->deviceLocalConstantBuffers    = config.getOption<bool>        ("d3d9.deviceLocalConstantBuffers",    false);
     this->allowDirectBufferMapping      = config.getOption<bool>        ("d3d9.allowDirectBufferMapping",      true);
     this->seamlessCubes                 = config.getOption<bool>        ("d3d9.seamlessCubes",                 false);
-    this->textureMemory                 = config.getOption<int32_t>     ("d3d9.textureMemory",                100) << 20;
+    this->textureMemory                 = config.getOption<int32_t>     ("d3d9.textureMemory",                 100) << 20;
+    this->deviceLossOnFocusLoss         = config.getOption<bool>        ("d3d9.deviceLossOnFocusLoss",         false);
+    this->samplerLodBias                = config.getOption<float>       ("d3d9.samplerLodBias",                0.0f);
+    this->clampNegativeLodBias          = config.getOption<bool>        ("d3d9.clampNegativeLodBias",          false);
+    this->countLosableResources         = config.getOption<bool>        ("d3d9.countLosableResources",         true);
+    this->reproducibleCommandStream     = config.getOption<bool>        ("d3d9.reproducibleCommandStream",     false);
+
+    // D3D8 options
+    this->drefScaling                   = config.getOption<int32_t>     ("d3d8.scaleDref",                     0);
+
+    // Clamp the shader model value between 0 and 3
+    this->shaderModel    = dxvk::clamp(this->shaderModel, 0u, 3u);
+    // Clamp LOD bias so that people don't abuse this in unintended ways
+    this->samplerLodBias = dxvk::fclamp(this->samplerLodBias, -2.0f, 1.0f);
 
     std::string floatEmulation = Config::toLower(config.getOption<std::string>("d3d9.floatEmulation", "auto"));
     if (floatEmulation == "strict") {
@@ -84,7 +93,10 @@ namespace dxvk {
       d3d9FloatEmulation = D3D9FloatEmulation::Enabled;
     } else {
       bool hasMulz = adapter != nullptr
-                  && adapter->matchesDriver(VK_DRIVER_ID_MESA_RADV, 0, 0);
+                  && (adapter->matchesDriver(VK_DRIVER_ID_MESA_RADV)
+                   || adapter->matchesDriver(VK_DRIVER_ID_MESA_NVK)
+                   || adapter->matchesDriver(VK_DRIVER_ID_AMD_OPEN_SOURCE, Version(2, 0, 316), Version())
+                   || adapter->matchesDriver(VK_DRIVER_ID_NVIDIA_PROPRIETARY, Version(565, 57, 1), Version()));
       d3d9FloatEmulation = hasMulz ? D3D9FloatEmulation::Strict : D3D9FloatEmulation::Enabled;
     }
 

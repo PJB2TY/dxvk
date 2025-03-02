@@ -132,7 +132,7 @@ namespace dxvk {
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
           VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A },
-        { D3D9ConversionFormat_L6V5U5, 1u,
+        { D3D9ConversionFormat_L6V5U5,
         // Convert -> float (this is a mixed snorm and unorm type)
           VK_FORMAT_R16G16B16A16_SFLOAT } };
 
@@ -142,7 +142,7 @@ namespace dxvk {
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
           VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_ONE },
-        { D3D9ConversionFormat_X8L8V8U8, 1u,
+        { D3D9ConversionFormat_X8L8V8U8,
         // Convert -> float (this is a mixed snorm and unorm type)
           VK_FORMAT_R16G16B16A16_SFLOAT } };
 
@@ -164,7 +164,7 @@ namespace dxvk {
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
           VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A },
-        { D3D9ConversionFormat_A2W10V10U10, 1u,
+        { D3D9ConversionFormat_A2W10V10U10,
         // Convert -> float (this is a mixed snorm and unorm type)
           VK_FORMAT_R16G16B16A16_SFLOAT } };
 
@@ -174,17 +174,17 @@ namespace dxvk {
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
           VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_ONE },
-        { D3D9ConversionFormat_W11V11U10, 1u,
+        { D3D9ConversionFormat_W11V11U10,
         // can't use B10G11R11 bc this is a snorm type
           VK_FORMAT_R16G16B16A16_SNORM } };
 
       case D3D9Format::UYVY: return {
-        VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_G8B8G8R8_422_UNORM,
         VK_FORMAT_UNDEFINED,
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
-        { D3D9ConversionFormat_UYVY, 1u }
+        { D3D9ConversionFormat_UYVY, VK_FORMAT_B8G8R8A8_UNORM }
       };
 
       case D3D9Format::R8G8_B8G8: return {
@@ -193,12 +193,12 @@ namespace dxvk {
         VK_IMAGE_ASPECT_COLOR_BIT };
 
       case D3D9Format::YUY2: return {
-        VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_G8B8G8R8_422_UNORM,
         VK_FORMAT_UNDEFINED,
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
-        { D3D9ConversionFormat_YUY2, 1u }
+        { D3D9ConversionFormat_YUY2, VK_FORMAT_B8G8R8A8_UNORM }
       };
 
       case D3D9Format::G8R8_G8B8: return {
@@ -410,24 +410,28 @@ namespace dxvk {
           VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R }};
 
       case D3D9Format::NV12: return {
-        VK_FORMAT_R8_UNORM,
+        VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
         VK_FORMAT_UNDEFINED,
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
-        { D3D9ConversionFormat_NV12, 2u, VK_FORMAT_B8G8R8A8_UNORM }
+        { D3D9ConversionFormat_NV12, VK_FORMAT_B8G8R8A8_UNORM }
       };
 
       case D3D9Format::YV12: return {
-        VK_FORMAT_R8_UNORM,
+        VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM,
         VK_FORMAT_UNDEFINED,
         VK_IMAGE_ASPECT_COLOR_BIT,
         { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
-        { D3D9ConversionFormat_YV12, 3u, VK_FORMAT_B8G8R8A8_UNORM }
+        { D3D9ConversionFormat_YV12, VK_FORMAT_B8G8R8A8_UNORM }
       };
 
       case D3D9Format::RAWZ: return {}; // Unsupported
+
+      case D3D9Format::R16:  return {}; // Unsupported
+
+      case D3D9Format::AL16: return {}; // Unsupported
 
       default:
         Logger::warn(str::format("ConvertFormat: Unknown format encountered: ", Format));
@@ -435,12 +439,39 @@ namespace dxvk {
     }
   }
 
+  // Block size of formats that require some form of alignment
+  D3D9_FORMAT_BLOCK_SIZE GetFormatAlignedBlockSize(D3D9Format Format) {
+    switch (Format) {
+      case D3D9Format::DXT1:
+      case D3D9Format::DXT2:
+      case D3D9Format::DXT3:
+      case D3D9Format::DXT4:
+      case D3D9Format::DXT5:
+      case D3D9Format::ATI1:
+      case D3D9Format::ATI2:
+        return { 4, 4, 1 };
+
+      case D3D9Format::YUY2:
+      case D3D9Format::UYVY:
+        return { 2, 1, 1 };
+
+      default:
+        return {}; // Irrelevant or unknown block size
+    }
+  }
+
   D3D9VkFormatTable::D3D9VkFormatTable(
     const Rc<DxvkAdapter>& adapter,
     const D3D9Options&     options) {
-    m_dfSupport = options.supportDFFormats;
+
+    const auto& props = adapter->deviceProperties();
+    uint32_t vendorId  = options.customVendorId == -1 ? props.vendorID : uint32_t(options.customVendorId);
+
+    // NVIDIA does not natively support any DF formats
+    m_dfSupport = vendorId == uint32_t(DxvkGpuVendor::Nvidia) ? false : options.supportDFFormats;
     m_x4r4g4b4Support = options.supportX4R4G4B4;
-    m_d32supportFinal = options.supportD32;
+    // Only AMD supports D16_LOCKABLE natively
+    m_d16lockableSupport = vendorId == uint32_t(DxvkGpuVendor::Amd) ? true : options.supportD16Lockable;
 
     // AMD do not support 24-bit depth buffers on Vulkan,
     // so we have to fall back to a 32-bit depth format.
@@ -473,13 +504,13 @@ namespace dxvk {
     if (Format == D3D9Format::X4R4G4B4 && !m_x4r4g4b4Support)
       return D3D9_VK_FORMAT_MAPPING();
 
+    if (Format == D3D9Format::D16_LOCKABLE && !m_d16lockableSupport)
+      return D3D9_VK_FORMAT_MAPPING();
+
     if (Format == D3D9Format::DF16 && !m_dfSupport)
       return D3D9_VK_FORMAT_MAPPING();
 
     if (Format == D3D9Format::DF24 && !m_dfSupport)
-      return D3D9_VK_FORMAT_MAPPING();
-
-    if (Format == D3D9Format::D32 && !m_d32supportFinal)
       return D3D9_VK_FORMAT_MAPPING();
     
     if (!m_d24s8Support && mapping.FormatColor == VK_FORMAT_D24_UNORM_S8_UINT)
@@ -499,9 +530,6 @@ namespace dxvk {
     static const DxvkFormatInfo a8r3g3b2    = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
     static const DxvkFormatInfo a8p8        = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
     static const DxvkFormatInfo p8          = { 1, VK_IMAGE_ASPECT_COLOR_BIT };
-    static const DxvkFormatInfo l6v5u5      = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
-    static const DxvkFormatInfo x8l8v8u8    = { 4, VK_IMAGE_ASPECT_COLOR_BIT };
-    static const DxvkFormatInfo a2w10v10u10 = { 4, VK_IMAGE_ASPECT_COLOR_BIT };
     static const DxvkFormatInfo cxv8u8      = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
     static const DxvkFormatInfo unknown     = {};
 
@@ -520,15 +548,6 @@ namespace dxvk {
 
       case D3D9Format::P8:
         return &p8;
-
-      case D3D9Format::L6V5U5:
-        return &l6v5u5;
-
-      case D3D9Format::X8L8V8U8:
-        return &x8l8v8u8;
-
-      case D3D9Format::A2W10V10U10:
-        return &a2w10v10u10;
 
       // MULTI2_ARGB8 -> Don't have a clue what this is.
 

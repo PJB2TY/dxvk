@@ -17,6 +17,7 @@ namespace dxvk {
     friend class D3D11CommonContext<D3D11ImmediateContext>;
     friend class D3D11SwapChain;
     friend class D3D11VideoContext;
+    friend class D3D11DXGIKeyedMutex;
   public:
     
     D3D11ImmediateContext(
@@ -77,11 +78,38 @@ namespace dxvk {
             ID3DDeviceContextState*           pState,
             ID3DDeviceContextState**          ppPreviousState);
 
+    void Acquire11on12Resource(
+            ID3D11Resource*             pResource,
+            VkImageLayout               SrcLayout);
+
+    void Release11on12Resource(
+            ID3D11Resource*             pResource,
+            VkImageLayout               DstLayout);
+
     void SynchronizeCsThread(
             uint64_t                          SequenceNumber);
 
+    D3D10Multithread& GetMultithread() {
+        return m_multithread;
+    }
+
     D3D10DeviceLock LockContext() {
       return m_multithread.AcquireLock();
+    }
+
+    void InjectCsChunk(
+            DxvkCsQueue                 Queue,
+            DxvkCsChunkRef&&            Chunk,
+            bool                        Synchronize);
+
+    template<typename Fn>
+    void InjectCs(
+            DxvkCsQueue                 Queue,
+            Fn&&                        Command) {
+      auto chunk = AllocCsChunk();
+      chunk->push(std::move(Command));
+
+      InjectCsChunk(Queue, std::move(chunk), false);
     }
 
   private:
@@ -91,19 +119,27 @@ namespace dxvk {
 
     uint32_t                m_mappedImageCount = 0u;
 
-    VkDeviceSize            m_maxImplicitDiscardSize = 0ull;
-
     Rc<sync::CallbackFence> m_submissionFence;
     uint64_t                m_submissionId = 0ull;
+    DxvkSubmitStatus        m_submitStatus;
 
     uint64_t                m_flushSeqNum = 0ull;
     GpuFlushTracker         m_flushTracker;
+
+    Rc<sync::Fence>         m_stagingBufferFence;
+
+    VkDeviceSize            m_discardMemoryCounter = 0u;
+    VkDeviceSize            m_discardMemoryOnFlush = 0u;
+
+    bool                    m_hasPendingMsaaResolve = false;
 
     D3D10Multithread        m_multithread;
     D3D11VideoContext       m_videoContext;
 
     Com<D3D11DeviceContextState, false> m_stateObject;
-    
+
+    std::string             m_flushReason;
+
     HRESULT MapBuffer(
             D3D11Buffer*                pResource,
             D3D11_MAP                   MapType,
@@ -139,10 +175,11 @@ namespace dxvk {
 
     void SynchronizeDevice();
 
-    void EndFrame();
+    void EndFrame(
+            Rc<DxvkLatencyTracker>      LatencyTracker);
     
     bool WaitForResource(
-      const Rc<DxvkResource>&           Resource,
+      const DxvkPagedResource&          Resource,
             uint64_t                    SequenceNumber,
             D3D11_MAP                   MapType,
             UINT                        MapFlags);
@@ -160,12 +197,26 @@ namespace dxvk {
 
     uint64_t GetPendingCsChunks();
 
+    void ApplyDirtyNullBindings();
+
     void ConsiderFlush(
             GpuFlushType                FlushType);
 
     void ExecuteFlush(
             GpuFlushType                FlushType,
-            HANDLE                      hEvent);
+            HANDLE                      hEvent,
+            BOOL                        Synchronize);
+
+    void ThrottleAllocation();
+
+    void ThrottleDiscard(
+            VkDeviceSize                Size);
+
+    DxvkStagingBufferStats GetStagingMemoryStatistics();
+
+    static GpuFlushType GetMaxFlushType(
+            D3D11Device*    pParent,
+      const Rc<DxvkDevice>& Device);
 
   };
   

@@ -2,6 +2,8 @@
 
 #include "dxvk_include.h"
 
+#include "../util/util_version.h"
+
 namespace dxvk {
 
   /**
@@ -13,6 +15,7 @@ namespace dxvk {
    * so before using them, check whether they are supported.
    */
   struct DxvkDeviceInfo {
+    Version                                                   driverVersion;
     VkPhysicalDeviceProperties2                               core;
     VkPhysicalDeviceVulkan11Properties                        vk11;
     VkPhysicalDeviceVulkan12Properties                        vk12;
@@ -21,9 +24,12 @@ namespace dxvk {
     VkPhysicalDeviceCustomBorderColorPropertiesEXT            extCustomBorderColor;
     VkPhysicalDeviceExtendedDynamicState3PropertiesEXT        extExtendedDynamicState3;
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT      extGraphicsPipelineLibrary;
+    VkPhysicalDeviceLineRasterizationPropertiesEXT            extLineRasterization;
+    VkPhysicalDeviceMultiDrawPropertiesEXT                    extMultiDraw;
     VkPhysicalDeviceRobustness2PropertiesEXT                  extRobustness2;
     VkPhysicalDeviceTransformFeedbackPropertiesEXT            extTransformFeedback;
     VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT       extVertexAttributeDivisor;
+    VkPhysicalDeviceMaintenance5PropertiesKHR                 khrMaintenance5;
   };
 
 
@@ -44,24 +50,36 @@ namespace dxvk {
     VkBool32                                                  extConservativeRasterization;
     VkPhysicalDeviceCustomBorderColorFeaturesEXT              extCustomBorderColor;
     VkPhysicalDeviceDepthClipEnableFeaturesEXT                extDepthClipEnable;
+    VkPhysicalDeviceDepthBiasControlFeaturesEXT               extDepthBiasControl;
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT          extExtendedDynamicState3;
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT        extFragmentShaderInterlock;
     VkBool32                                                  extFullScreenExclusive;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT        extGraphicsPipelineLibrary;
+    VkBool32                                                  extHdrMetadata;
+    VkPhysicalDeviceLineRasterizationFeaturesEXT              extLineRasterization;
     VkBool32                                                  extMemoryBudget;
     VkPhysicalDeviceMemoryPriorityFeaturesEXT                 extMemoryPriority;
+    VkPhysicalDeviceMultiDrawFeaturesEXT                      extMultiDraw;
     VkPhysicalDeviceNonSeamlessCubeMapFeaturesEXT             extNonSeamlessCubeMap;
+    VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT      extPageableDeviceLocalMemory;
     VkPhysicalDeviceRobustness2FeaturesEXT                    extRobustness2;
     VkPhysicalDeviceShaderModuleIdentifierFeaturesEXT         extShaderModuleIdentifier;
     VkBool32                                                  extShaderStencilExport;
     VkBool32                                                  extSwapchainColorSpace;
-    VkBool32                                                  extHdrMetadata;
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT          extSwapchainMaintenance1;
     VkPhysicalDeviceTransformFeedbackFeaturesEXT              extTransformFeedback;
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT         extVertexAttributeDivisor;
     VkBool32                                                  khrExternalMemoryWin32;
     VkBool32                                                  khrExternalSemaphoreWin32;
+    VkPhysicalDeviceMaintenance5FeaturesKHR                   khrMaintenance5;
+    VkPhysicalDevicePresentIdFeaturesKHR                      khrPresentId;
+    VkPhysicalDevicePresentWaitFeaturesKHR                    khrPresentWait;
+    VkPhysicalDeviceDescriptorPoolOverallocationFeaturesNV    nvDescriptorPoolOverallocation;
+    VkBool32                                                  nvLowLatency2;
+    VkPhysicalDeviceRawAccessChainsFeaturesNV                 nvRawAccessChains;
     VkBool32                                                  nvxBinaryImport;
     VkBool32                                                  nvxImageViewHandle;
+    VkBool32                                                  khrWin32KeyedMutex;
   };
 
 }

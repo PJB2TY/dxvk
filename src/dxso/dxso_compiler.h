@@ -248,6 +248,7 @@ namespace dxvk {
     uint32_t usedSamplers() const { return m_usedSamplers; }
     uint32_t usedRTs() const { return m_usedRTs; }
     uint32_t maxDefinedConstant() const { return m_maxDefinedConstant; }
+    uint32_t textureTypes() const { return m_textureTypes; }
 
   private:
 
@@ -272,9 +273,7 @@ namespace dxvk {
     ////////////////////////////////////////////////
     // Temporary r# vector registers with immediate
     // indexing, and x# vector array registers.
-    std::array<
-      DxsoRegisterPointer,
-      DxsoMaxTempRegs> m_rRegs;
+    std::vector<DxsoRegisterPointer> m_rRegs;
 
     ////////////////////////////////////////////////
     // Predicate registers
@@ -346,8 +345,6 @@ namespace dxvk {
     // covers vertex input and fragment output.
     uint32_t m_inputMask = 0u;
     uint32_t m_outputMask = 0u;
-    uint32_t m_pushConstOffset = 0u;
-    uint32_t m_pushConstSize = 0u;
 
     ///////////////////////////////////
     // Shader-specific data structures
@@ -361,6 +358,8 @@ namespace dxvk {
     // and render targets for hazard tracking
     uint32_t m_usedSamplers;
     uint32_t m_usedRTs;
+
+    uint32_t m_textureTypes;
 
     uint32_t m_specUbo = 0;
 
@@ -547,7 +546,7 @@ namespace dxvk {
             DxsoRegisterValue       a,
             DxsoRegisterValue       b);
 
-    DxsoRegisterValue emitFma(
+    DxsoRegisterValue emitMad(
             DxsoRegisterValue       a,
             DxsoRegisterValue       b,
             DxsoRegisterValue       c);
@@ -620,6 +619,12 @@ namespace dxvk {
 
       return this->emitRegisterLoad(lookup, writeMask);
     }
+
+    std::array<uint32_t, 2> emitBem(
+      const DxsoInstructionContext& ctx,
+      const DxsoRegisterValue& src0,
+      const DxsoRegisterValue& src1
+    );
 
     ///////////////////////////////
     // Handle shader ops

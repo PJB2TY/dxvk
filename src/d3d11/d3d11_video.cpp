@@ -190,18 +190,18 @@ namespace dxvk {
 
     VkImageAspectFlags aspectMask = lookupFormatInfo(formatInfo.Format)->aspectMask;
 
-    DxvkImageViewCreateInfo viewInfo;
-    viewInfo.format  = formatInfo.Format;
-    viewInfo.swizzle = formatInfo.Swizzle;
-    viewInfo.usage   = VK_IMAGE_USAGE_SAMPLED_BIT;
+    DxvkImageViewKey viewInfo;
+    viewInfo.format = formatInfo.Format;
+    viewInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    viewInfo.packedSwizzle = DxvkImageViewKey::packSwizzle(formatInfo.Swizzle);
 
     switch (m_desc.ViewDimension) {
       case D3D11_VPIV_DIMENSION_TEXTURE2D:
-        viewInfo.type       = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.minLevel   = m_desc.Texture2D.MipSlice;
-        viewInfo.numLevels  = 1;
-        viewInfo.minLayer   = 0;
-        viewInfo.numLayers  = 1;
+        viewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.mipIndex   = m_desc.Texture2D.MipSlice;
+        viewInfo.mipCount   = 1;
+        viewInfo.layerIndex = m_desc.Texture2D.ArraySlice;
+        viewInfo.layerCount = 1;
         break;
 
       case D3D11_VPIV_DIMENSION_UNKNOWN:
@@ -209,17 +209,17 @@ namespace dxvk {
     }
 
     m_subresources.aspectMask = aspectMask;
-    m_subresources.baseArrayLayer = viewInfo.minLayer;
-    m_subresources.layerCount = viewInfo.numLayers;
-    m_subresources.mipLevel = viewInfo.minLevel;
+    m_subresources.baseArrayLayer = viewInfo.layerIndex;
+    m_subresources.layerCount = viewInfo.layerCount;
+    m_subresources.mipLevel = viewInfo.mipIndex;
 
     for (uint32_t i = 0; aspectMask && i < m_views.size(); i++) {
-      viewInfo.aspect = vk::getNextAspect(aspectMask);
+      viewInfo.aspects = vk::getNextAspect(aspectMask);
 
-      if (viewInfo.aspect != VK_IMAGE_ASPECT_COLOR_BIT)
+      if (viewInfo.aspects != VK_IMAGE_ASPECT_COLOR_BIT)
         viewInfo.format = formatFamily.Formats[i];
 
-      m_views[i] = pDevice->GetDXVKDevice()->createImageView(dxvkImage, viewInfo);
+      m_views[i] = dxvkImage->createView(viewInfo);
     }
 
     m_isYCbCr = IsYCbCrFormat(resourceDesc.Format);
@@ -287,35 +287,34 @@ namespace dxvk {
     DXGI_VK_FORMAT_INFO formatInfo = pDevice->LookupFormat(
       resourceDesc.Format, DXGI_VK_FORMAT_MODE_COLOR);
 
-    DxvkImageViewCreateInfo viewInfo;
-    viewInfo.format  = formatInfo.Format;
-    viewInfo.aspect  = lookupFormatInfo(viewInfo.format)->aspectMask;
-    viewInfo.swizzle = formatInfo.Swizzle;
-    viewInfo.usage   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    DxvkImageViewKey viewInfo;
+    viewInfo.format = formatInfo.Format;
+    viewInfo.aspects = lookupFormatInfo(viewInfo.format)->aspectMask;
+    viewInfo.packedSwizzle = DxvkImageViewKey::packSwizzle(formatInfo.Swizzle);
+    viewInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     switch (m_desc.ViewDimension) {
       case D3D11_VPOV_DIMENSION_TEXTURE2D:
-        viewInfo.type       = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.minLevel   = m_desc.Texture2D.MipSlice;
-        viewInfo.numLevels  = 1;
-        viewInfo.minLayer   = 0;
-        viewInfo.numLayers  = 1;
+        viewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.mipIndex   = m_desc.Texture2D.MipSlice;
+        viewInfo.mipCount   = 1;
+        viewInfo.layerIndex = 0;
+        viewInfo.layerCount = 1;
         break;
 
       case D3D11_VPOV_DIMENSION_TEXTURE2DARRAY:
-        viewInfo.type       = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-        viewInfo.minLevel   = m_desc.Texture2DArray.MipSlice;
-        viewInfo.numLevels  = 1;
-        viewInfo.minLayer   = m_desc.Texture2DArray.FirstArraySlice;
-        viewInfo.numLayers  = m_desc.Texture2DArray.ArraySize;
+        viewInfo.viewType   = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        viewInfo.mipIndex   = m_desc.Texture2DArray.MipSlice;
+        viewInfo.mipCount   = 1;
+        viewInfo.layerIndex = m_desc.Texture2DArray.FirstArraySlice;
+        viewInfo.layerCount = m_desc.Texture2DArray.ArraySize;
         break;
 
       case D3D11_VPOV_DIMENSION_UNKNOWN:
         throw DxvkError("Invalid view dimension");
     }
 
-    m_view = pDevice->GetDXVKDevice()->createImageView(
-      GetCommonTexture(pResource)->GetImage(), viewInfo);
+    m_view = GetCommonTexture(pResource)->GetImage()->createView(viewInfo);
   }
 
 
@@ -1038,7 +1037,9 @@ namespace dxvk {
         continue;
 
       if (!hasStreamsEnabled) {
+        m_ctx->ResetDirtyTracking();
         m_ctx->ResetCommandListState();
+
         BindOutputView(pOutputView);
         hasStreamsEnabled = true;
       }
@@ -1048,6 +1049,7 @@ namespace dxvk {
 
     if (hasStreamsEnabled) {
       UnbindResources();
+
       m_ctx->RestoreCommandListState();
     }
 
@@ -1262,12 +1264,28 @@ namespace dxvk {
         viewport.height = float(cStreamState.dstRect.bottom) - viewport.y;
       }
 
+      VkExtent3D viewExtent = cViews[0]->mipLevelExtent(0);
+
+      VkRect2D srcRect;
+      srcRect.offset = { 0, 0 };
+      srcRect.extent = { viewExtent.width, viewExtent.height };
+
+      if (cStreamState.srcRectEnabled) {
+        srcRect.offset.x      = cStreamState.srcRect.left;
+        srcRect.offset.y      = cStreamState.srcRect.top;
+        srcRect.extent.width  = cStreamState.srcRect.right - srcRect.offset.x;
+        srcRect.extent.height = cStreamState.srcRect.bottom - srcRect.offset.y;
+      }
+
       UboData uboData = { };
       uboData.colorMatrix[0][0] = 1.0f;
       uboData.colorMatrix[1][1] = 1.0f;
       uboData.colorMatrix[2][2] = 1.0f;
-      uboData.coordMatrix[0][0] = 1.0f;
-      uboData.coordMatrix[1][1] = 1.0f;
+      uboData.coordMatrix[0][0] = float(srcRect.extent.width) / float(viewExtent.width);
+      uboData.coordMatrix[1][1] = float(srcRect.extent.height) / float(viewExtent.height);
+      uboData.coordMatrix[2][0] = float(srcRect.offset.x) / float(viewExtent.width);
+      uboData.coordMatrix[2][1] = float(srcRect.offset.y) / float(viewExtent.height);
+      uboData.srcRect = srcRect;
       uboData.yMin = 0.0f;
       uboData.yMax = 1.0f;
       uboData.isPlanar = cViews[1] != nullptr;
@@ -1280,27 +1298,28 @@ namespace dxvk {
         uboData.yMax = 0.9215686f;
       }
 
-      DxvkBufferSliceHandle uboSlice = m_ubo->allocSlice();
-      memcpy(uboSlice.mapPtr, &uboData, sizeof(uboData));
+      Rc<DxvkResourceAllocation> uboSlice = m_ubo->allocateStorage();
+      memcpy(uboSlice->mapPtr(), &uboData, sizeof(uboData));
 
-      ctx->invalidateBuffer(m_ubo, uboSlice);
+      ctx->invalidateBuffer(m_ubo, std::move(uboSlice));
       ctx->setViewports(1, &viewport, &scissor);
 
       ctx->bindShader<VK_SHADER_STAGE_VERTEX_BIT>(Rc<DxvkShader>(m_vs));
       ctx->bindShader<VK_SHADER_STAGE_FRAGMENT_BIT>(Rc<DxvkShader>(m_fs));
 
       ctx->bindUniformBuffer(VK_SHADER_STAGE_FRAGMENT_BIT, 0, DxvkBufferSlice(m_ubo));
-      ctx->bindResourceSampler(VK_SHADER_STAGE_FRAGMENT_BIT, 1, Rc<DxvkSampler>(m_sampler));
 
       for (uint32_t i = 0; i < cViews.size(); i++)
-        ctx->bindResourceImageView(VK_SHADER_STAGE_FRAGMENT_BIT, 2 + i, Rc<DxvkImageView>(cViews[i]));
+        ctx->bindResourceImageView(VK_SHADER_STAGE_FRAGMENT_BIT, 1 + i, Rc<DxvkImageView>(cViews[i]));
 
-      ctx->draw(3, 1, 0, 0);
+      VkDrawIndirectCommand draw = { };
+      draw.vertexCount   = 3u;
+      draw.instanceCount = 1u;
 
-      ctx->bindResourceSampler(VK_SHADER_STAGE_FRAGMENT_BIT, 1, nullptr);
+      ctx->draw(1, &draw);
 
       for (uint32_t i = 0; i < cViews.size(); i++)
-        ctx->bindResourceImageView(VK_SHADER_STAGE_FRAGMENT_BIT, 2 + i, nullptr);
+        ctx->bindResourceImageView(VK_SHADER_STAGE_FRAGMENT_BIT, 1 + i, nullptr);
     });
   }
 
@@ -1311,30 +1330,9 @@ namespace dxvk {
     bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     bufferInfo.stages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     bufferInfo.access = VK_ACCESS_UNIFORM_READ_BIT;
+    bufferInfo.debugName = "Video blit parameters";
+
     m_ubo = m_device->createBuffer(bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  }
-
-
-  void D3D11VideoContext::CreateSampler() {
-    DxvkSamplerCreateInfo samplerInfo;
-    samplerInfo.magFilter       = VK_FILTER_LINEAR;
-    samplerInfo.minFilter       = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode      = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.mipmapLodBias   = 0.0f;
-    samplerInfo.mipmapLodMin    = 0.0f;
-    samplerInfo.mipmapLodMax    = 0.0f;
-    samplerInfo.useAnisotropy   = VK_FALSE;
-    samplerInfo.maxAnisotropy   = 1.0f;
-    samplerInfo.addressModeU    = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV    = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW    = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.compareToDepth  = VK_FALSE;
-    samplerInfo.compareOp       = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.reductionMode   = VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE;
-    samplerInfo.borderColor     = VkClearColorValue();
-    samplerInfo.usePixelCoord   = VK_FALSE;
-    samplerInfo.nonSeamless     = VK_FALSE;
-    m_sampler = m_device->createSampler(samplerInfo);
   }
 
 
@@ -1342,11 +1340,10 @@ namespace dxvk {
     SpirvCodeBuffer vsCode(d3d11_video_blit_vert);
     SpirvCodeBuffer fsCode(d3d11_video_blit_frag);
 
-    const std::array<DxvkBindingInfo, 4> fsBindings = {{
+    const std::array<DxvkBindingInfo, 3> fsBindings = {{
       { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, VK_IMAGE_VIEW_TYPE_MAX_ENUM, VK_SHADER_STAGE_FRAGMENT_BIT, VK_ACCESS_UNIFORM_READ_BIT, VK_TRUE },
-      { VK_DESCRIPTOR_TYPE_SAMPLER,        1, VK_IMAGE_VIEW_TYPE_MAX_ENUM, VK_SHADER_STAGE_FRAGMENT_BIT, 0 },
+      { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,  1, VK_IMAGE_VIEW_TYPE_2D,       VK_SHADER_STAGE_FRAGMENT_BIT, VK_ACCESS_SHADER_READ_BIT },
       { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,  2, VK_IMAGE_VIEW_TYPE_2D,       VK_SHADER_STAGE_FRAGMENT_BIT, VK_ACCESS_SHADER_READ_BIT },
-      { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,  3, VK_IMAGE_VIEW_TYPE_2D,       VK_SHADER_STAGE_FRAGMENT_BIT, VK_ACCESS_SHADER_READ_BIT },
     }};
 
     DxvkShaderCreateInfo vsInfo;
@@ -1368,7 +1365,6 @@ namespace dxvk {
     if (std::exchange(m_resourcesCreated, true))
       return;
 
-    CreateSampler();
     CreateUniformBuffer();
     CreateShaders();
   }

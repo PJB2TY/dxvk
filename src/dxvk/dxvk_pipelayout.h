@@ -12,6 +12,25 @@ namespace dxvk {
   class DxvkDevice;
 
   /**
+   * \brief Order-invariant atomic access operation
+   *
+   * Information used to optimize barriers when a resource
+   * is accessed exlusively via order-invariant stores.
+   */
+  enum class DxvkAccessOp : uint16_t {
+    None  = 0,
+    Or    = 1,
+    And   = 2,
+    Xor   = 3,
+    Add   = 4,
+    IMin  = 5,
+    IMax  = 6,
+    UMin  = 7,
+    UMax  = 8,
+  };
+
+
+  /**
    * \brief Descriptor set indices
    */
   struct DxvkDescriptorSets {
@@ -37,6 +56,7 @@ namespace dxvk {
     VkShaderStageFlagBits stage;            ///< Shader stage
     VkAccessFlags         access;           ///< Access mask for the resource
     VkBool32              uboSet;           ///< Whether to include this in the UBO set
+    DxvkAccessOp          accessOp;         ///< Order-invariant store type, if any
 
     /**
      * \brief Computes descriptor set index for the given binding
@@ -292,8 +312,19 @@ namespace dxvk {
      * \brief Retrieves push constant range
      * \returns Push constant range
      */
-    VkPushConstantRange getPushConstantRange() const {
-      return m_pushConst;
+    VkPushConstantRange getPushConstantRange(bool independent) const {
+      VkPushConstantRange result = m_pushConst;
+
+      if (!independent) {
+        result.stageFlags &= m_pushConstStages;
+
+        if (!result.stageFlags) {
+          result.offset = 0;
+          result.size = 0;
+        }
+      }
+
+      return result;
     }
 
     /**
@@ -302,6 +333,16 @@ namespace dxvk {
      */
     VkShaderStageFlags getStages() const {
       return m_stages;
+    }
+
+    /**
+     * \brief Queries hazardous sets
+     *
+     * \returns Mask of sets with storage descriptors
+     *    that are not accessed in an order-invariant way.
+     */
+    uint32_t getHazardousSetMask() const {
+      return m_hazards;
     }
 
     /**
@@ -323,6 +364,12 @@ namespace dxvk {
      * \param [in] range Push constant range
      */
     void addPushConstantRange(VkPushConstantRange range);
+
+    /**
+     * \brief Adds a stage that actively uses push constants
+     * \param [in] stage Shader stage
+     */
+    void addPushConstantStage(VkShaderStageFlagBits stage);
 
     /**
      * \brief Merges binding layouts
@@ -353,7 +400,9 @@ namespace dxvk {
 
     std::array<DxvkBindingList, DxvkDescriptorSets::SetCount> m_bindings;
     VkPushConstantRange                                       m_pushConst;
+    VkShaderStageFlags                                        m_pushConstStages;
     VkShaderStageFlags                                        m_stages;
+    uint32_t                                                  m_hazards;
 
   };
 

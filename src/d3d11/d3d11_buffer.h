@@ -7,6 +7,7 @@
 
 #include "d3d11_device_child.h"
 #include "d3d11_interfaces.h"
+#include "d3d11_on_12.h"
 #include "d3d11_resource.h"
 
 namespace dxvk {
@@ -41,7 +42,9 @@ namespace dxvk {
     
     D3D11Buffer(
             D3D11Device*                pDevice,
-      const D3D11_BUFFER_DESC*          pDesc);
+      const D3D11_BUFFER_DESC*          pDesc,
+      const D3D11_ON_12_RESOURCE_INFO*  p11on12Info);
+
     ~D3D11Buffer();
     
     HRESULT STDMETHODCALLTYPE QueryInterface(
@@ -58,6 +61,8 @@ namespace dxvk {
     void STDMETHODCALLTYPE GetDesc(
             D3D11_BUFFER_DESC *pDesc) final;
     
+    void STDMETHODCALLTYPE SetDebugName(const char* pName) final;
+
     bool CheckViewCompatibility(
             UINT                BindFlags,
             DXGI_FORMAT         Format) const;
@@ -72,6 +77,10 @@ namespace dxvk {
 
     D3D11_COMMON_BUFFER_MAP_MODE GetMapMode() const {
       return m_mapMode;
+    }
+
+    uint64_t GetCookie() const {
+      return m_cookie;
     }
 
     Rc<DxvkBuffer> GetBuffer() const {
@@ -110,17 +119,18 @@ namespace dxvk {
         : DxvkBufferSlice();
     }
     
-    DxvkBufferSliceHandle AllocSlice() {
-      return m_buffer->allocSlice();
+    Rc<DxvkResourceAllocation> AllocSlice(DxvkLocalAllocationCache* cache) {
+      return m_buffer->allocateStorage(cache);
     }
     
-    DxvkBufferSliceHandle DiscardSlice() {
-      m_mapped = m_buffer->allocSlice();
-      return m_mapped;
+    Rc<DxvkResourceAllocation> DiscardSlice(DxvkLocalAllocationCache* cache) {
+      auto allocation = m_buffer->allocateStorage(cache);
+      m_mapPtr = allocation->mapPtr();
+      return allocation;
     }
 
-    DxvkBufferSliceHandle GetMappedSlice() const {
-      return m_mapped;
+    void* GetMapPtr() const {
+      return m_mapPtr;
     }
 
     D3D10Buffer* GetD3D10Iface() {
@@ -143,6 +153,14 @@ namespace dxvk {
     }
 
     /**
+     * \brief Retrieves D3D11on12 resource info
+     * \returns 11on12 resource info
+     */
+    D3D11_ON_12_RESOURCE_INFO Get11on12Info() const {
+      return m_11on12;
+    }
+
+    /**
      * \brief Normalizes buffer description
      * 
      * \param [in] pDesc Buffer description
@@ -151,16 +169,33 @@ namespace dxvk {
     static HRESULT NormalizeBufferProperties(
             D3D11_BUFFER_DESC*      pDesc);
 
+    /**
+     * \brief Initializes D3D11 buffer description from D3D12
+     *
+     * \param [in] pResource D3D12 resource
+     * \param [in] pResourceFlags D3D11 flag overrides
+     * \param [out] pBufferDesc D3D11 buffer description
+     * \returns \c S_OK if the parameters are valid
+     */
+    static HRESULT GetDescFromD3D12(
+            ID3D12Resource*         pResource,
+      const D3D11_RESOURCE_FLAGS*   pResourceFlags,
+            D3D11_BUFFER_DESC*      pBufferDesc);
+
   private:
     
     D3D11_BUFFER_DESC             m_desc;
+    D3D11_ON_12_RESOURCE_INFO     m_11on12;
     D3D11_COMMON_BUFFER_MAP_MODE  m_mapMode;
     
     Rc<DxvkBuffer>                m_buffer;
+    uint64_t                      m_cookie = 0u;
+
     Rc<DxvkBuffer>                m_soCounter;
     Rc<DxvkSparsePageAllocator>   m_sparseAllocator;
-    DxvkBufferSliceHandle         m_mapped;
     uint64_t                      m_seq = 0ull;
+
+    void*                         m_mapPtr = nullptr;
 
     D3D11DXGIResource             m_resource;
     D3D10Buffer                   m_d3d10;
@@ -173,7 +208,8 @@ namespace dxvk {
 
     Rc<DxvkBuffer> CreateSoCounterBuffer();
 
-    D3D11_COMMON_BUFFER_MAP_MODE DetermineMapMode();
+    static D3D11_COMMON_BUFFER_MAP_MODE DetermineMapMode(
+            VkMemoryPropertyFlags MemFlags);
 
   };
 
